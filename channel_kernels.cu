@@ -14,17 +14,19 @@ extern "C" { // Prevent C++ name mangling
  * sender_contention_kernel (Revised): Uses list of target VAs
  * page_vas:      GPU VA of device buffer containing actual target page VAs.
  * num_pages:     Number of VAs in the buffer.
+ * stop_flag:     Pointer to stop flag in device memory.
  */
 __global__ void sender_contention_kernel(uint64_t *page_vas, // Pointer to VAs in device mem
-                                         int num_pages) {
+                                         int num_pages,
+                                         int *stop_flag) {
     if (threadIdx.x != 0 || blockIdx.x != 0)
         return;
 
     volatile char dummy_val;
     int current_idx = 0; // Index within the page_vas array
 
-    // Loop indefinitely - host controls duration
-    while (true) {
+    // Loop until stop flag is set
+    while (*stop_flag == 0) {
         // Access the page specified by the current index
         uint64_t page_addr = page_vas[current_idx]; // Get VA directly
         // Volatile read from the page to ensure TLB access
@@ -68,20 +70,22 @@ __global__ void receiver_probe_kernel(uint64_t *page_vas0,   // Pointer to VAs
         volatile uint64_t *chase_ptr1 = (volatile uint64_t *)page1_va;
         time_start = get_time();
 #pragma unroll
-        for (int k = 0; k < chase_length; ++k) { /* ... chase ... */
+        for (int k = 0; k < chase_length; ++k) {
+            chase_ptr1 = (volatile uint64_t *)(*chase_ptr1);
         }
         time_end = get_time();
-        /* ... dependent read ... */
+        final_read_val = *((volatile char *)chase_ptr1); // Dependent read
         t1 = time_end - time_start; // Store T1
 
         // --- Time Set 0 Access SECOND ---
         volatile uint64_t *chase_ptr0 = (volatile uint64_t *)page0_va;
         time_start = get_time();
 #pragma unroll
-        for (int k = 0; k < chase_length; ++k) { /* ... chase ... */
+        for (int k = 0; k < chase_length; ++k) {
+            chase_ptr0 = (volatile uint64_t *)(*chase_ptr0);
         }
         time_end = get_time();
-        /* ... dependent read ... */
+        final_read_val = *((volatile char *)chase_ptr0); // Dependent read
         t0 = time_end - time_start; // Store T0
 
         // Store results (t0, t1 pair) - check bounds carefully

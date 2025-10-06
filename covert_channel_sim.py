@@ -192,8 +192,8 @@ def sender_worker(bit_q, pool_gpu_va_start, pages0_indices, pages1_indices, n_pa
         return
     print("[Sender] Process started")
     sender_cu_context = None; cu_module = None
-    stop_flag_gpu_ptr = ctypes.c_ulonglong(0) # Use managed alloc now
-    d_indices_ptr = ctypes.c_ulonglong(0)     # Use managed alloc now
+    d_page_vas_ptr = ctypes.c_ulonglong(0)     # Use managed alloc for page VAs
+    stop_flag_gpu_ptr = ctypes.c_ulonglong(0)  # Use managed alloc for stop flag
     sender_kernel_func = ctypes.c_void_p()
 
     try:
@@ -215,21 +215,20 @@ def sender_worker(bit_q, pool_gpu_va_start, pages0_indices, pages1_indices, n_pa
         cu_module = cu_module_ptr
         CU_CHECK(libcuda.cuModuleGetFunction(ctypes.byref(sender_kernel_func), cu_module, b"sender_contention_kernel"), "Sender cuModuleGetFunction")
 
-        # Allocate GPU Memory using Managed Alloc
+        # Allocate GPU Memory using Managed Alloc 
         flags = 1 # CU_MEM_ATTACH_GLOBAL
+        CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(d_page_vas_ptr), n_pages * ctypes.sizeof(ctypes.c_ulonglong), flags), "Sender cuMemAllocManaged page_vas")
         CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(stop_flag_gpu_ptr), ctypes.sizeof(ctypes.c_int), flags), "Sender cuMemAllocManaged stop_flag")
-        CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(d_indices_ptr), n_pages * ctypes.sizeof(ctypes.c_int), flags), "Sender cuMemAllocManaged indices")
 
         # Initialize Stop Flag
         stop_val_cpu = np.array([0], dtype=np.int32)
-        CU_CHECK(libcuda.cuMemcpyHtoD_v2(stop_flag_gpu_ptr.value, # Dest GPU Pointer Value
-                                         stop_val_cpu.ctypes.data_as(ctypes.c_void_p), # Src Host Pointer
-                                         stop_val_cpu.nbytes), # Size
+        CU_CHECK(libcuda.cuMemcpyHtoD_v2(stop_flag_gpu_ptr.value,
+                                         stop_val_cpu.ctypes.data_as(ctypes.c_void_p),
+                                         stop_val_cpu.nbytes),
                  "Sender cuMemcpyHtoD stop_flag")
 
         # Prepare Kernel Args (values used repeatedly)
-        pool_base_va_val = ctypes.c_ulonglong(pool_gpu_va_start)
-        d_indices_val = ctypes.c_ulonglong(d_indices_ptr.value) # This is the GPU VA of the indices buffer
+        d_page_vas_val = ctypes.c_ulonglong(d_page_vas_ptr.value) # This is the GPU VA of the page VAs buffer
         n_pages_val = ctypes.c_int(n_pages)
         stop_flag_kernel_arg = ctypes.c_ulonglong(stop_flag_gpu_ptr.value) # Kernel needs the GPU VA
 
@@ -239,22 +238,24 @@ def sender_worker(bit_q, pool_gpu_va_start, pages0_indices, pages1_indices, n_pa
             try:
                 bit = bit_q.get(timeout=0.1)
                 indices_to_use = pages0_indices if bit == 0 else pages1_indices
-                # Create ctypes array on host to copy from
-                IndexType = ctypes.c_int * n_pages
-                h_indices = IndexType(*indices_to_use)
+                
+                # Convert page indices to actual page VAs
+                PageVAsType = ctypes.c_ulonglong * n_pages
+                h_page_vas = PageVAsType()
+                for i, page_idx in enumerate(indices_to_use):
+                    h_page_vas[i] = pool_gpu_va_start + page_idx * PAGE_SIZE
 
-                # Copy the correct index list to device (managed) memory
-                CU_CHECK(libcuda.cuMemcpyHtoD_v2(d_indices_ptr.value, # Dest GPU Pointer Value
-                                                 ctypes.byref(h_indices), # Src Host Pointer (byref for ctypes)
-                                                 ctypes.sizeof(h_indices)), # Size
-                         f"Sender memcpy indices bit {bit}")
+                # Copy the correct page VAs to device (managed) memory
+                CU_CHECK(libcuda.cuMemcpyHtoD_v2(d_page_vas_ptr.value, # Dest GPU Pointer Value
+                                                 ctypes.byref(h_page_vas), # Src Host Pointer (byref for ctypes)
+                                                 ctypes.sizeof(h_page_vas)), # Size
+                         f"Sender memcpy page_vas bit {bit}")
 
-                # Prepare launch params
+                # Prepare launch params - kernel expects (uint64_t *page_vas, int num_pages, int *stop_flag)
                 launch_args = [
-                    ctypes.byref(pool_base_va_val),
-                    ctypes.byref(d_indices_val), # Pointer to device ptr value
-                    ctypes.byref(n_pages_val),
-                    ctypes.byref(stop_flag_kernel_arg) # Pointer to device ptr value
+                    ctypes.byref(d_page_vas_val), # Pointer to device page VAs buffer
+                    ctypes.byref(n_pages_val),    # Number of pages
+                    ctypes.byref(stop_flag_kernel_arg) # Pointer to stop flag
                 ]
                 packed_args = (ctypes.c_void_p * len(launch_args))(*[ctypes.cast(p, ctypes.c_void_p) for p in launch_args])
 
@@ -279,9 +280,9 @@ def sender_worker(bit_q, pool_gpu_va_start, pages0_indices, pages1_indices, n_pa
     finally: # --- Cleanup ---
         print("[Sender] Cleaning up...")
         # Use .value when calling cuMemFree_v2 and correct exception syntax
-        if d_indices_ptr.value != 0:
+        if d_page_vas_ptr.value != 0:
             try:
-                CU_CHECK(libcuda.cuMemFree_v2(d_indices_ptr.value), "Sender cuMemFree indices")
+                CU_CHECK(libcuda.cuMemFree_v2(d_page_vas_ptr.value), "Sender cuMemFree page_vas")
             except Exception: # Corrected
                 pass
         if stop_flag_gpu_ptr.value != 0:
@@ -306,11 +307,10 @@ def receiver_worker(result_q, pool_gpu_va_start, pages0_indices, pages1_indices,
         return
     print("[Receiver] Process started")
     receiver_cu_context = None; cu_module = None
-    stop_flag_gpu_ptr = ctypes.c_ulonglong(0) # Use managed alloc
     results_buffer_gpu_va = 0 # Keep results managed, store VA
     results_buffer_gpu_ptr = ctypes.c_ulonglong(0) # Store pointer object
-    d_indices0_ptr = ctypes.c_ulonglong(0) # Use managed alloc
-    d_indices1_ptr = ctypes.c_ulonglong(0) # Use managed alloc
+    d_page_vas0_ptr = ctypes.c_ulonglong(0) # Use managed alloc for page VAs
+    d_page_vas1_ptr = ctypes.c_ulonglong(0) # Use managed alloc for page VAs
     receiver_kernel_func = ctypes.c_void_p(); results_host = None
 
     try:
@@ -337,35 +337,34 @@ def receiver_worker(result_q, pool_gpu_va_start, pages0_indices, pages1_indices,
         results_buffer_gpu_va = results_buffer_gpu_ptr.value
         if not results_buffer_gpu_va: raise RuntimeError("Failed results buffer alloc")
 
-        CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(stop_flag_gpu_ptr), ctypes.sizeof(ctypes.c_int), flags), "Receiver cuMemAllocManaged stop_flag")
-        CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(d_indices0_ptr), n_pages * ctypes.sizeof(ctypes.c_int), flags), "Receiver cuMemAllocManaged indices0")
-        CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(d_indices1_ptr), n_pages * ctypes.sizeof(ctypes.c_int), flags), "Receiver cuMemAllocManaged indices1")
+        CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(d_page_vas0_ptr), n_pages * ctypes.sizeof(ctypes.c_ulonglong), flags), "Receiver cuMemAllocManaged page_vas0")
+        CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(d_page_vas1_ptr), n_pages * ctypes.sizeof(ctypes.c_ulonglong), flags), "Receiver cuMemAllocManaged page_vas1")
 
-        # Initialize Stop Flag & Copy Index Lists
-        stop_val_cpu = np.array([0], dtype=np.int32)
-        CU_CHECK(libcuda.cuMemcpyHtoD_v2(stop_flag_gpu_ptr.value, # Use .value
-                                         stop_val_cpu.ctypes.data_as(ctypes.c_void_p),
-                                         stop_val_cpu.nbytes),
-                 "Receiver cuMemcpyHtoD stop_flag")
-        IndexType = ctypes.c_int * n_pages
-        h_indices0 = IndexType(*pages0_indices); h_indices1 = IndexType(*pages1_indices)
-        CU_CHECK(libcuda.cuMemcpyHtoD_v2(d_indices0_ptr.value, ctypes.byref(h_indices0), ctypes.sizeof(h_indices0)), "Receiver cuMemcpyHtoD indices0") # Use .value
-        CU_CHECK(libcuda.cuMemcpyHtoD_v2(d_indices1_ptr.value, ctypes.byref(h_indices1), ctypes.sizeof(h_indices1)), "Receiver cuMemcpyHtoD indices1") # Use .value
+        # Convert page indices to actual page VAs and copy to device
+        PageVAsType = ctypes.c_ulonglong * n_pages
+        h_page_vas0 = PageVAsType()
+        h_page_vas1 = PageVAsType()
+        for i in range(n_pages):
+            h_page_vas0[i] = pool_gpu_va_start + pages0_indices[i] * PAGE_SIZE
+            h_page_vas1[i] = pool_gpu_va_start + pages1_indices[i] * PAGE_SIZE
+        
+        CU_CHECK(libcuda.cuMemcpyHtoD_v2(d_page_vas0_ptr.value, ctypes.byref(h_page_vas0), ctypes.sizeof(h_page_vas0)), "Receiver cuMemcpyHtoD page_vas0")
+        CU_CHECK(libcuda.cuMemcpyHtoD_v2(d_page_vas1_ptr.value, ctypes.byref(h_page_vas1), ctypes.sizeof(h_page_vas1)), "Receiver cuMemcpyHtoD page_vas1")
 
-        # Prepare Kernel Launch Args
-        pool_base_va_val = ctypes.c_ulonglong(pool_gpu_va_start)
-        d_indices0_val = ctypes.c_ulonglong(d_indices0_ptr.value)
-        d_indices1_val = ctypes.c_ulonglong(d_indices1_ptr.value)
+        # Prepare Kernel Launch Args - kernel expects (uint64_t *page_vas0, uint64_t *page_vas1, int num_pages_per_set, uint64_t *results_buffer_va, int max_samples)
+        d_page_vas0_val = ctypes.c_ulonglong(d_page_vas0_ptr.value)
+        d_page_vas1_val = ctypes.c_ulonglong(d_page_vas1_ptr.value)
         n_pages_val = ctypes.c_int(n_pages)
         results_buffer_val = ctypes.c_ulonglong(results_buffer_gpu_va) # Pass GPU VA
         max_samples_val = ctypes.c_int(max_total_samples // 2)
-        stop_flag_kernel_arg = ctypes.c_ulonglong(stop_flag_gpu_ptr.value) # Pass GPU VA
 
         launch_args = [
-            ctypes.byref(pool_base_va_val), ctypes.byref(d_indices0_val),
-            ctypes.byref(d_indices1_val), ctypes.byref(n_pages_val),
-            ctypes.byref(results_buffer_val), ctypes.byref(max_samples_val),
-            ctypes.byref(stop_flag_kernel_arg) ]
+            ctypes.byref(d_page_vas0_val),     # uint64_t *page_vas0
+            ctypes.byref(d_page_vas1_val),     # uint64_t *page_vas1
+            ctypes.byref(n_pages_val),         # int num_pages_per_set
+            ctypes.byref(results_buffer_val),  # uint64_t *results_buffer_va
+            ctypes.byref(max_samples_val)      # int max_samples
+        ]
         packed_args = (ctypes.c_void_p * len(launch_args))(*[ctypes.cast(p, ctypes.c_void_p) for p in launch_args])
 
         # Launch Kernel & Wait
@@ -373,12 +372,7 @@ def receiver_worker(result_q, pool_gpu_va_start, pages0_indices, pages1_indices,
         start_time = time.time()
         CU_CHECK(libcuda.cuLaunchKernel(receiver_kernel_func, 1, 1, 1, 1, 1, 1, 0, None, packed_args, None), "Receiver cuLaunchKernel")
         stop_event.wait()
-        print("[Receiver] Stop event received. Setting final stop flag...")
-        stop_val_cpu = np.array([1], dtype=np.int32)
-        CU_CHECK(libcuda.cuMemcpyHtoD_v2(stop_flag_gpu_ptr.value, # Use .value
-                                         stop_val_cpu.ctypes.data_as(ctypes.c_void_p),
-                                         stop_val_cpu.nbytes),
-                 "Receiver cuMemcpyHtoD stop_flag_final")
+        print("[Receiver] Stop event received.")
         CU_CHECK(libcuda.cuStreamSynchronize(None), "Receiver cuStreamSynchronize")
         end_time = time.time()
         duration = end_time - start_time
@@ -396,24 +390,19 @@ def receiver_worker(result_q, pool_gpu_va_start, pages0_indices, pages1_indices,
     finally: # --- Cleanup ---
         print("[Receiver] Cleaning up...")
         # Use .value when calling cuMemFree_v2 and correct exception syntax
-        if d_indices0_ptr.value != 0:
+        if d_page_vas0_ptr.value != 0:
             try:
-                CU_CHECK(libcuda.cuMemFree_v2(d_indices0_ptr.value), "Receiver cuMemFree indices0")
+                CU_CHECK(libcuda.cuMemFree_v2(d_page_vas0_ptr.value), "Receiver cuMemFree page_vas0")
             except Exception: # Corrected
                 pass
-        if d_indices1_ptr.value != 0:
+        if d_page_vas1_ptr.value != 0:
             try:
-                CU_CHECK(libcuda.cuMemFree_v2(d_indices1_ptr.value), "Receiver cuMemFree indices1")
+                CU_CHECK(libcuda.cuMemFree_v2(d_page_vas1_ptr.value), "Receiver cuMemFree page_vas1")
             except Exception: # Corrected
                 pass
         if results_buffer_gpu_va != 0: # results_buffer_gpu_va already holds the value
             try:
                 CU_CHECK(libcuda.cuMemFree_v2(results_buffer_gpu_va), "Receiver cuMemFree results")
-            except Exception: # Corrected
-                pass
-        if stop_flag_gpu_ptr.value != 0: # Use updated pointer name
-            try:
-                CU_CHECK(libcuda.cuMemFree_v2(stop_flag_gpu_ptr.value), "Receiver cuMemFree stop_flag")
             except Exception: # Corrected
                 pass
         # Context destroy takes the handle
