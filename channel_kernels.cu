@@ -17,8 +17,7 @@ extern "C" { // Prevent C++ name mangling
  * stop_flag:     Pointer to stop flag in device memory.
  */
 __global__ void sender_contention_kernel(uint64_t *page_vas, // Pointer to VAs in device mem
-                                         int num_pages,
-                                         int *stop_flag) {
+                                         int num_pages, int *stop_flag) {
     if (threadIdx.x != 0 || blockIdx.x != 0)
         return;
 
@@ -75,7 +74,7 @@ __global__ void receiver_probe_kernel(uint64_t *page_vas0,   // Pointer to VAs
         }
         time_end = get_time();
         final_read_val = *((volatile char *)chase_ptr1); // Dependent read
-        t1 = time_end - time_start; // Store T1
+        t1 = time_end - time_start;                      // Store T1
 
         // --- Time Set 0 Access SECOND ---
         volatile uint64_t *chase_ptr0 = (volatile uint64_t *)page0_va;
@@ -86,7 +85,7 @@ __global__ void receiver_probe_kernel(uint64_t *page_vas0,   // Pointer to VAs
         }
         time_end = get_time();
         final_read_val = *((volatile char *)chase_ptr0); // Dependent read
-        t0 = time_end - time_start; // Store T0
+        t0 = time_end - time_start;                      // Store T0
 
         // Store results (t0, t1 pair) - check bounds carefully
         int results_base_idx = sample_count * 2;
