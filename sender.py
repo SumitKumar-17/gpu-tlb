@@ -35,6 +35,7 @@ def main(target_set_arg):
     cu_module = None
     pool_gpu_va_start = 0 # For cleanup only
     d_page_vas_ptr = ctypes.c_ulonglong(0) # Device ptr holding target VAs
+    d_stop_flag_ptr = ctypes.c_ulonglong(0) # Device ptr for stop flag
 
     try:
         # --- Init CUDA ---
@@ -69,6 +70,13 @@ def main(target_set_arg):
         CU_CHECK(local_libcuda.cuMemAlloc_v2(ctypes.byref(d_page_vas_ptr), ctypes.sizeof(h_vas)), "Sender cuMemAlloc page VAs")
         CU_CHECK(local_libcuda.cuMemcpyHtoD_v2(d_page_vas_ptr.value, ctypes.byref(h_vas), ctypes.sizeof(h_vas)), "Sender cuMemcpyHtoD page VAs")
         print("[Sender] Target VAs copied to device.")
+        
+        # --- Allocate Stop Flag ---
+        stop_flag_size = ctypes.sizeof(ctypes.c_int)
+        CU_CHECK(local_libcuda.cuMemAlloc_v2(ctypes.byref(d_stop_flag_ptr), stop_flag_size), "Sender cuMemAlloc stop flag")
+        h_stop_flag = ctypes.c_int(0) # Initialize to 0 (continue running)
+        CU_CHECK(local_libcuda.cuMemcpyHtoD_v2(d_stop_flag_ptr.value, ctypes.byref(h_stop_flag), stop_flag_size), "Sender cuMemcpyHtoD stop flag")
+        print("[Sender] Stop flag initialized on device.")
 
         # --- Load PTX & Kernel ---
         cu_module_ptr = ctypes.c_void_p()
@@ -82,9 +90,11 @@ def main(target_set_arg):
         # --- Prepare Launch Args (Revised Kernel) ---
         d_page_vas_val = ctypes.c_ulonglong(d_page_vas_ptr.value) # Pass VA of VA list
         n_pages_val = ctypes.c_int(N_PAGES)
+        d_stop_flag_val = ctypes.c_ulonglong(d_stop_flag_ptr.value) # Pass VA of stop flag
         launch_args = [
             ctypes.byref(d_page_vas_val), # Pointer to device ptr value
-            ctypes.byref(n_pages_val)
+            ctypes.byref(n_pages_val),
+            ctypes.byref(d_stop_flag_val) # Pointer to stop flag
         ]
         packed_args = (ctypes.c_void_p * len(launch_args))(*[ctypes.cast(p, ctypes.c_void_p) for p in launch_args])
 
@@ -97,11 +107,21 @@ def main(target_set_arg):
             time.sleep(1)
 
     except KeyboardInterrupt:
-        print("\n[Sender] Ctrl+C detected. Exiting.")
+        print("\n[Sender] Ctrl+C detected. Setting stop flag...")
+        # Set stop flag to signal kernel to exit
+        if d_stop_flag_ptr.value != 0:
+            h_stop_flag = ctypes.c_int(1) # Set to 1 to stop
+            CU_CHECK(local_libcuda.cuMemcpyHtoD_v2(d_stop_flag_ptr.value, ctypes.byref(h_stop_flag), ctypes.sizeof(h_stop_flag)), "Sender cuMemcpyHtoD stop flag")
+            # Wait a bit for kernel to finish
+            time.sleep(0.5)
+        print("[Sender] Exiting.")
     except Exception as e:
         print(f"\n[Sender] Error: {e}")
     finally: # --- Cleanup (using local_libcuda) ---
         print("[Sender] Cleaning up...")
+        if d_stop_flag_ptr.value != 0:
+            try: CU_CHECK(local_libcuda.cuMemFree_v2(d_stop_flag_ptr.value), "Sender cuMemFree stop flag")
+            except Exception: pass
         if d_page_vas_ptr.value != 0:
             try: CU_CHECK(local_libcuda.cuMemFree_v2(d_page_vas_ptr.value), "Sender cuMemFree page VAs")
             except Exception: pass

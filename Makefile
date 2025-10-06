@@ -28,7 +28,7 @@ $(BASELINE_KERNEL_PTX): $(BASELINE_KERNEL_SRC) gpu_utils.py # Depend on gpu_util
 	$(NVCC) $(NVCCFLAGS) $(ARCH) --ptx -o $@ $<
 
 # Phony targets
-.PHONY: all clean run_baseline run_sender0 run_sender1 run_receiver
+.PHONY: all clean run_baseline run_sender0 run_sender1 run_receiver run_covert_channel
 
 run_baseline: $(BASELINE_KERNEL_PTX) run_timing.py gpu_utils.py l3_hash_rtx3060.py
 	@echo "Running baseline timing..."
@@ -46,7 +46,11 @@ run_receiver: $(KERNEL_PTX) receiver.py gpu_utils.py l3_hash_rtx3060.py
 	@echo "Starting receiver..."
 	python3 receiver.py
 
+run_covert_channel: $(KERNEL_PTX) covert_channel_sim.py gpu_utils.py l3_hash_rtx3060.py
+	@echo "Running covert channel simulation..."
+	python3 covert_channel_sim.py
+
 clean:
 	@echo "Cleaning up..."
-	rm -f $(KERNEL_PTX) $(BASELINE_KERNEL_PTX) *.pyc __pycache__/* receiver_results.npz *.png *.npz baseline_latency.png
+	rm -f $(KERNEL_PTX) $(BASELINE_KERNEL_PTX) *.pyc __pycache__/* receiver_results.npz *.png *.npz baseline_latency.png covert_channel_timing*.png
 	@echo "Done."
