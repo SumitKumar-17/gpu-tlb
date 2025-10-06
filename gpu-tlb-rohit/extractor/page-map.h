@@ -5,26 +5,23 @@
 #include <map>
 
 #include "mem-dump.h"
-#include "trans.h"
 #include "page-dir.h"
+#include "trans.h"
 
 /*******************************************************************************
  *
  ******************************************************************************/
 class PageMap : public Trans {
-  std::map<int, Trans *> mPageMapEnts;
-  
-public:
-  PageMap(MemDump &, std::uint64_t, TransType);
-  
-  ~PageMap();
-  
-  bool 
-  constructTrans();
-  
-  void 
-  printTrans(std::uint64_t);
+    std::map<int, Trans *> mPageMapEnts;
+
+  public:
+    PageMap(MemDump &, std::uint64_t, TransType);
+
+    ~PageMap();
+
+    bool constructTrans();
+
+    void printTrans(std::uint64_t);
 };
 
 #endif
-

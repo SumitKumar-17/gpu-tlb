@@ -12,13 +12,15 @@ __device__ __forceinline__ unsigned long long get_time() {
 }
 
 // CUDA error checking macro
-#define CUDA_CHECK(err) { \
-    cudaError_t result = (err); \
-    if (result != cudaSuccess) { \
-        fprintf(stderr, "CUDA Error at %s:%d : %s\n", __FILE__, __LINE__, cudaGetErrorString(result)); \
-        exit(EXIT_FAILURE); \
-    } \
-}
+#define CUDA_CHECK(err)                                                                            \
+    {                                                                                              \
+        cudaError_t result = (err);                                                                \
+        if (result != cudaSuccess) {                                                               \
+            fprintf(stderr, "CUDA Error at %s:%d : %s\n", __FILE__, __LINE__,                      \
+                    cudaGetErrorString(result));                                                   \
+            exit(EXIT_FAILURE);                                                                    \
+        }                                                                                          \
+    }
 
 // Kernel configuration (adjust if needed)
 #define THREADS_PER_BLOCK 256

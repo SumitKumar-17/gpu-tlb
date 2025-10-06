@@ -14,22 +14,18 @@
  *
  ******************************************************************************/
 class MemDump {
-  int           mFd;
-  void *        mBasePtr;
-  std::uint64_t mLen;
-  
-public:
-  MemDump(const char *);
-  
-  ~MemDump();
-  
-  std::uint64_t  
-  getChunkNum();
-  
-  std::uint8_t 
-  getByte(std::uint64_t);
-  
+    int mFd;
+    void *mBasePtr;
+    std::uint64_t mLen;
+
+  public:
+    MemDump(const char *);
+
+    ~MemDump();
+
+    std::uint64_t getChunkNum();
+
+    std::uint8_t getByte(std::uint64_t);
 };
 
 #endif
-

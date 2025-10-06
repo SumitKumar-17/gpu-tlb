@@ -1,24 +1,16 @@
-#include <cuda.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdio.h>
 #include <assert.h>
+#include <cuda.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #ifndef COMMON_H
 #define COMMON_H
 
-int xored[8][4] = {
-    {44, 36, 28, 20},
-    {45, 37, 29, 21},
-    {46, 38, 30, 22},
-    {39, 31, 23, -1},
-    {40, 32, 24, -1},
-    {41, 33, 25, -1},
-    {42, 34, 26, -1},
-    {43, 35, 27, -1}
-};
+int xored[8][4] = {{44, 36, 28, 20}, {45, 37, 29, 21}, {46, 38, 30, 22}, {39, 31, 23, -1},
+                   {40, 32, 24, -1}, {41, 33, 25, -1}, {42, 34, 26, -1}, {43, 35, 27, -1}};
 
 int slice_xor[] = {25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46};
 
@@ -101,8 +93,8 @@ uint64_t **create_list(uint64_t page_num, uint8_t *base_addr, uint64_t stride, s
     return list;
 }
 
-void write_to_file(uint64_t* eviction_set, int length, const char* filename, uint64_t base_address) {
-    FILE* f = fopen(filename, "w");
+void write_to_file(uint64_t *eviction_set, int length, const char *filename, uint64_t base_address) {
+    FILE *f = fopen(filename, "w");
     if (f == NULL) {
         perror("Failed to open file");
         return;
@@ -137,13 +129,9 @@ int get_virtual_address(uint64_t address) {
     return result;
 }
 
-uint64_t idx_to_addr(uint64_t idx, uint64_t base_address) {
-    return base_address ^ (idx << 20);
-}
+uint64_t idx_to_addr(uint64_t idx, uint64_t base_address) { return base_address ^ (idx << 20); }
 
-uint64_t addr_to_idx(uint64_t addr, uint64_t base_address) {
-    return (addr ^ base_address) >> 20;
-}
+uint64_t addr_to_idx(uint64_t addr, uint64_t base_address) { return (addr ^ base_address) >> 20; }
 
 int get_slice_address(uint64_t addr) {
     int slice_id = 0;
@@ -156,11 +144,11 @@ int get_slice_address(uint64_t addr) {
 
 struct __eviction_set *get_eviction_set(int cache_set, uint64_t base_address, int n) {
     struct __eviction_set *es = (struct __eviction_set *)malloc(sizeof(struct __eviction_set));
-    es->indexes = (uint32_t*)malloc(n * sizeof(uint32_t));
+    es->indexes = (uint32_t *)malloc(n * sizeof(uint32_t));
     es->count = n;
     es->base_address = (uint8_t *)base_address;
     uint64_t start_addr = base_address;
-    uint64_t* addresses = (uint64_t*)malloc(n * sizeof(uint64_t));
+    uint64_t *addresses = (uint64_t *)malloc(n * sizeof(uint64_t));
     int count = 0;
 
     while (count < n) {
@@ -177,14 +165,14 @@ struct __eviction_set *get_eviction_set(int cache_set, uint64_t base_address, in
     return es;
 }
 
-struct __eviction_set* get_slice_set(int cache_set, uint64_t base_address, int n, int slice_id) {
+struct __eviction_set *get_slice_set(int cache_set, uint64_t base_address, int n, int slice_id) {
     uint64_t start_addr = base_address;
     struct __eviction_set *es = (struct __eviction_set *)malloc(sizeof(struct __eviction_set));
-    es->indexes = (uint32_t*)malloc(n * sizeof(uint32_t));
+    es->indexes = (uint32_t *)malloc(n * sizeof(uint32_t));
     es->count = n;
     es->base_address = (uint8_t *)base_address;
 
-    uint64_t* addresses = (uint64_t*)malloc(n * sizeof(uint64_t));
+    uint64_t *addresses = (uint64_t *)malloc(n * sizeof(uint64_t));
     int count = 0;
 
     while (count < n) {
