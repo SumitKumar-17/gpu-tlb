@@ -17,7 +17,7 @@ ALLOC_POOL_SIZE_MB = 256 # Size of initial memory pool to find pages
 
 # Channel Parameters (Tune these!)
 DELAY_MS_SENDER = 20  # Host sleep delay (ms) for sender between sending bits
-THRESHOLD_T = 1460    # Timing threshold from baseline (e.g., 1460 cycles)
+THRESHOLD_T = 1504    # Timing threshold from baseline (e.g., 1460 cycles)
 NUM_BITS = 64         # Number of bits to transmit
 RECEIVER_SAMPLES_PER_BIT = 30 # How many (t0, t1) samples receiver tries per expected bit duration
 
