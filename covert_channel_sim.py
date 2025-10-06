@@ -192,8 +192,9 @@ def sender_worker(bit_q, pool_gpu_va_start, pages0_indices, pages1_indices, n_pa
         return
     print("[Sender] Process started")
     sender_cu_context = None; cu_module = None
-    d_page_vas_ptr = ctypes.c_ulonglong(0)     # Use managed alloc for page VAs
-    stop_flag_gpu_ptr = ctypes.c_ulonglong(0)  # Use managed alloc for stop flag
+    sender_pool_gpu_ptr = ctypes.c_ulonglong(0)  # Sender's own memory pool
+    d_page_vas_ptr = ctypes.c_ulonglong(0)       # Use managed alloc for page VAs
+    stop_flag_gpu_ptr = ctypes.c_ulonglong(0)    # Use managed alloc for stop flag
     sender_kernel_func = ctypes.c_void_p()
 
     try:
@@ -207,6 +208,17 @@ def sender_worker(bit_q, pool_gpu_va_start, pages0_indices, pages1_indices, n_pa
         sender_cu_context = sender_cu_context_ptr
         print("[Sender] CUDA Context created.")
 
+        # Allocate sender's own memory pool (same size as parent)
+        flags = 1 # CU_MEM_ATTACH_GLOBAL
+        pool_size_bytes = ALLOC_POOL_SIZE_MB * 1024 * 1024
+        CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(sender_pool_gpu_ptr), pool_size_bytes, flags), "Sender cuMemAllocManaged pool")
+        sender_pool_va_start = sender_pool_gpu_ptr.value
+        print(f"[Sender] Allocated own memory pool. GPU VA Start: {hex(sender_pool_va_start)}")
+
+        # Initialize the sender's memory pool with pointer chasing for both sets
+        all_indices = list(set(pages0_indices + pages1_indices))
+        initialize_chase_pages_driver(sender_pool_va_start, all_indices, len(all_indices))
+
         # Load PTX & Kernel
         cu_module_ptr = ctypes.c_void_p()
         with open(KERNELS_PTX, 'rb') as f: ptx_content = f.read()
@@ -215,8 +227,7 @@ def sender_worker(bit_q, pool_gpu_va_start, pages0_indices, pages1_indices, n_pa
         cu_module = cu_module_ptr
         CU_CHECK(libcuda.cuModuleGetFunction(ctypes.byref(sender_kernel_func), cu_module, b"sender_contention_kernel"), "Sender cuModuleGetFunction")
 
-        # Allocate GPU Memory using Managed Alloc 
-        flags = 1 # CU_MEM_ATTACH_GLOBAL
+        # Allocate GPU Memory for kernel parameters
         CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(d_page_vas_ptr), n_pages * ctypes.sizeof(ctypes.c_ulonglong), flags), "Sender cuMemAllocManaged page_vas")
         CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(stop_flag_gpu_ptr), ctypes.sizeof(ctypes.c_int), flags), "Sender cuMemAllocManaged stop_flag")
 
@@ -239,11 +250,11 @@ def sender_worker(bit_q, pool_gpu_va_start, pages0_indices, pages1_indices, n_pa
                 bit = bit_q.get(timeout=0.1)
                 indices_to_use = pages0_indices if bit == 0 else pages1_indices
                 
-                # Convert page indices to actual page VAs
+                # Convert page indices to actual page VAs using sender's pool
                 PageVAsType = ctypes.c_ulonglong * n_pages
                 h_page_vas = PageVAsType()
                 for i, page_idx in enumerate(indices_to_use):
-                    h_page_vas[i] = pool_gpu_va_start + page_idx * PAGE_SIZE
+                    h_page_vas[i] = sender_pool_va_start + page_idx * PAGE_SIZE
 
                 # Copy the correct page VAs to device (managed) memory
                 CU_CHECK(libcuda.cuMemcpyHtoD_v2(d_page_vas_ptr.value, # Dest GPU Pointer Value
@@ -290,6 +301,11 @@ def sender_worker(bit_q, pool_gpu_va_start, pages0_indices, pages1_indices, n_pa
                 CU_CHECK(libcuda.cuMemFree_v2(stop_flag_gpu_ptr.value), "Sender cuMemFree stop_flag")
             except Exception: # Corrected
                 pass
+        if sender_pool_gpu_ptr.value != 0:
+            try:
+                CU_CHECK(libcuda.cuMemFree_v2(sender_pool_gpu_ptr.value), "Sender cuMemFree pool")
+            except Exception: # Corrected
+                pass
         # Context destroy takes the handle
         if sender_cu_context and sender_cu_context.value:
             try:
@@ -307,6 +323,7 @@ def receiver_worker(result_q, pool_gpu_va_start, pages0_indices, pages1_indices,
         return
     print("[Receiver] Process started")
     receiver_cu_context = None; cu_module = None
+    receiver_pool_gpu_ptr = ctypes.c_ulonglong(0)  # Receiver's own memory pool
     results_buffer_gpu_va = 0 # Keep results managed, store VA
     results_buffer_gpu_ptr = ctypes.c_ulonglong(0) # Store pointer object
     d_page_vas0_ptr = ctypes.c_ulonglong(0) # Use managed alloc for page VAs
@@ -321,6 +338,17 @@ def receiver_worker(result_q, pool_gpu_va_start, pages0_indices, pages1_indices,
         CU_CHECK(libcuda.cuCtxCreate_v2(ctypes.byref(receiver_cu_context_ptr), 0, receiver_cu_device), "Receiver cuCtxCreate"); receiver_cu_context = receiver_cu_context_ptr
         print("[Receiver] CUDA Context created.")
 
+        # Allocate receiver's own memory pool (same size as parent)
+        flags = 1 # CU_MEM_ATTACH_GLOBAL
+        pool_size_bytes = ALLOC_POOL_SIZE_MB * 1024 * 1024
+        CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(receiver_pool_gpu_ptr), pool_size_bytes, flags), "Receiver cuMemAllocManaged pool")
+        receiver_pool_va_start = receiver_pool_gpu_ptr.value
+        print(f"[Receiver] Allocated own memory pool. GPU VA Start: {hex(receiver_pool_va_start)}")
+
+        # Initialize the receiver's memory pool with pointer chasing for both sets
+        all_indices = list(set(pages0_indices + pages1_indices))
+        initialize_chase_pages_driver(receiver_pool_va_start, all_indices, len(all_indices))
+
         # Load PTX & Kernel
         cu_module_ptr = ctypes.c_void_p();
         with open(KERNELS_PTX, 'rb') as f: ptx_content = f.read()
@@ -330,7 +358,6 @@ def receiver_worker(result_q, pool_gpu_va_start, pages0_indices, pages1_indices,
         CU_CHECK(libcuda.cuModuleGetFunction(ctypes.byref(receiver_kernel_func), cu_module, b"receiver_probe_kernel"), "Receiver cuModuleGetFunction")
 
         # Allocate GPU Memory using Managed Alloc
-        flags = 1 # CU_MEM_ATTACH_GLOBAL
         max_total_samples = num_bits * samples_per_bit * 2 * 2
         results_buffer_size = max_total_samples * ctypes.sizeof(ctypes.c_ulonglong)
         CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(results_buffer_gpu_ptr), results_buffer_size, flags), "Receiver cuMemAllocManaged results")
@@ -340,13 +367,13 @@ def receiver_worker(result_q, pool_gpu_va_start, pages0_indices, pages1_indices,
         CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(d_page_vas0_ptr), n_pages * ctypes.sizeof(ctypes.c_ulonglong), flags), "Receiver cuMemAllocManaged page_vas0")
         CU_CHECK(libcuda.cuMemAllocManaged(ctypes.byref(d_page_vas1_ptr), n_pages * ctypes.sizeof(ctypes.c_ulonglong), flags), "Receiver cuMemAllocManaged page_vas1")
 
-        # Convert page indices to actual page VAs and copy to device
+        # Convert page indices to actual page VAs using receiver's pool and copy to device
         PageVAsType = ctypes.c_ulonglong * n_pages
         h_page_vas0 = PageVAsType()
         h_page_vas1 = PageVAsType()
         for i in range(n_pages):
-            h_page_vas0[i] = pool_gpu_va_start + pages0_indices[i] * PAGE_SIZE
-            h_page_vas1[i] = pool_gpu_va_start + pages1_indices[i] * PAGE_SIZE
+            h_page_vas0[i] = receiver_pool_va_start + pages0_indices[i] * PAGE_SIZE
+            h_page_vas1[i] = receiver_pool_va_start + pages1_indices[i] * PAGE_SIZE
         
         CU_CHECK(libcuda.cuMemcpyHtoD_v2(d_page_vas0_ptr.value, ctypes.byref(h_page_vas0), ctypes.sizeof(h_page_vas0)), "Receiver cuMemcpyHtoD page_vas0")
         CU_CHECK(libcuda.cuMemcpyHtoD_v2(d_page_vas1_ptr.value, ctypes.byref(h_page_vas1), ctypes.sizeof(h_page_vas1)), "Receiver cuMemcpyHtoD page_vas1")
@@ -403,6 +430,11 @@ def receiver_worker(result_q, pool_gpu_va_start, pages0_indices, pages1_indices,
         if results_buffer_gpu_va != 0: # results_buffer_gpu_va already holds the value
             try:
                 CU_CHECK(libcuda.cuMemFree_v2(results_buffer_gpu_va), "Receiver cuMemFree results")
+            except Exception: # Corrected
+                pass
+        if receiver_pool_gpu_ptr.value != 0:
+            try:
+                CU_CHECK(libcuda.cuMemFree_v2(receiver_pool_gpu_ptr.value), "Receiver cuMemFree pool")
             except Exception: # Corrected
                 pass
         # Context destroy takes the handle
