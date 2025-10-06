@@ -16,7 +16,7 @@
 #define PAGE0_NUM 8000
 #define PAGE1_NUM 30000
 #define PAGE_DTLB_NUM 16
-#define PAGE_FILL_NUM  6000
+#define PAGE_FILL_NUM 6000
 #define WAIT_TIME 5000000000L
 
 #define BLK_NUM 100
@@ -26,14 +26,12 @@ uint32_t SMID0 = 0;
 uint32_t SMID1 = 1;
 
 uint32_t l1_idx_vec[] = {
-  0, 129, 258, 387,
-  1, 128, 259, 386,
-  2, 131, 256, 385,
-  3, 130, 257, 384,
+    0, 129, 258, 387, 1, 128, 259, 386, 2, 131, 256, 385, 3, 130, 257, 384,
 };
 
-__global__ void loop(volatile uint64_t *page0, volatile uint64_t *page1, volatile uint64_t *page_dtlb_smid0, volatile uint64_t *page_dtlb_smid1,
-                    volatile uint64_t *page_fill, uint64_t x, uint32_t SMID0, uint32_t SMID1) {
+__global__ void loop(volatile uint64_t *page0, volatile uint64_t *page1, volatile uint64_t *page_dtlb_smid0,
+                     volatile uint64_t *page_dtlb_smid1, volatile uint64_t *page_fill, uint64_t x,
+                     uint32_t SMID0, uint32_t SMID1) {
     uint64_t y = x;
     volatile uint64_t *ptr;
     volatile uint64_t *evt;
@@ -98,11 +96,11 @@ int main(int argc, char *argv[]) {
     uint8_t *chunk0 = NULL;
     uint8_t *chunk1 = NULL;
     uint8_t *base = NULL;
-    uint64_t **list_smid0 =      (uint64_t **)_malloc(sizeof(uint64_t *) * PAGE0_NUM);
-    uint64_t **list_smid1 =      (uint64_t **)_malloc(sizeof(uint64_t *) * PAGE1_NUM);
+    uint64_t **list_smid0 = (uint64_t **)_malloc(sizeof(uint64_t *) * PAGE0_NUM);
+    uint64_t **list_smid1 = (uint64_t **)_malloc(sizeof(uint64_t *) * PAGE1_NUM);
     uint64_t **list_dtlb_smid0 = (uint64_t **)_malloc(sizeof(uint64_t *) * PAGE_DTLB_NUM);
     uint64_t **list_dtlb_smid1 = (uint64_t **)_malloc(sizeof(uint64_t *) * PAGE_DTLB_NUM);
-    uint64_t **list_fill =       (uint64_t **)_malloc(sizeof(uint64_t *) * (PAGE_FILL_NUM + 1));
+    uint64_t **list_fill = (uint64_t **)_malloc(sizeof(uint64_t *) * (PAGE_FILL_NUM + 1));
     struct __eviction_set es_smid0;
     struct __eviction_set es_smid1;
 

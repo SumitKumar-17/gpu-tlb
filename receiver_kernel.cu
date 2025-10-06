@@ -2,8 +2,7 @@
 
 __global__ void receiver_kernel(volatile char **seq0, volatile char **seq1, int n_pages,
                                 unsigned long long *results, int max_samples,
-                                volatile int *stop_flag)
-{
+                                volatile int *stop_flag) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid != 0)
         return;
@@ -12,8 +11,7 @@ __global__ void receiver_kernel(volatile char **seq0, volatile char **seq1, int 
     int sample_count = 0;
     int page_idx = 0;
 
-    while (!(*stop_flag) && sample_count < max_samples * 2)
-    {
+    while (!(*stop_flag) && sample_count < max_samples * 2) {
         page_idx = (page_idx + 1) % n_pages;
 
         // Measure time for seq0 access
@@ -34,8 +32,7 @@ __global__ void receiver_kernel(volatile char **seq0, volatile char **seq1, int 
         end_time = get_time();
         t1 = end_time - start_time;
 
-        if (sample_count < max_samples * 2)
-        {
+        if (sample_count < max_samples * 2) {
             results[sample_count++] = t0;
             results[sample_count++] = t1;
         }

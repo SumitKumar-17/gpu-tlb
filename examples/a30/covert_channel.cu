@@ -1,25 +1,25 @@
+#include "common.h"
+#include <assert.h>
 #include <cuda.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
-#include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include "common.h"
 
 #define CHUNK0_SIZE (64L * 1024L * 1024L * 1024L * 1024L + 0x55554000000L)
 #define CHUNK1_SIZE (41L * 1024L * 1024L * 1024L * 1024L + 0x0ffc8000000L)
 #define STRIDE_SIZE (1L * 1024L * 1024L)
 
-#define BASE_ADDR_RECEIVER  0x700000000000
-#define BASE_ADDR_SENDER    0x702000000000
+#define BASE_ADDR_RECEIVER 0x700000000000
+#define BASE_ADDR_SENDER 0x702000000000
 #define DUMMY_ADDR 0x7F0000000000
 
 #define PAGE_NUM_RECEIVER 20000
-#define PAGE_NUM_SENDER   80000
-#define PAGE_NUM_L1  16
-#define PAGE_FILL_NUM  6000
+#define PAGE_NUM_SENDER 80000
+#define PAGE_NUM_L1 16
+#define PAGE_FILL_NUM 6000
 #define WAIT_TIME 500000000L
 #define WAIT_TIME2 100000000L
 #define ITERATIONS 5
@@ -28,7 +28,6 @@
 #define SHARED_MEM (96 * 1024)
 #define SMID0 0
 #define SMID1 20
-
 
 __device__ void rest(uint64_t wait_time) {
     uint64_t clk0 = 0;
@@ -39,8 +38,7 @@ __device__ void rest(uint64_t wait_time) {
         clk1 = clock64() - clk0;
 }
 
-__device__ uint64_t iterate_pages(volatile uint64_t *page_l2, volatile uint64_t *page_l1,
-                                  uint32_t sm) {
+__device__ uint64_t iterate_pages(volatile uint64_t *page_l2, volatile uint64_t *page_l1, uint32_t sm) {
     uint64_t clk0 = 0;
     uint64_t clk1 = 0;
     uint64_t cycle_count[ITERATIONS + 1] = {0};
@@ -99,7 +97,8 @@ __device__ void receiver(volatile uint64_t *page_l2, volatile uint64_t *page_l1,
     }
 }
 
-__device__ void sender(volatile uint64_t *page_l2, volatile uint64_t *page_l1, uint32_t *to_send, uint32_t len) {
+__device__ void sender(volatile uint64_t *page_l2, volatile uint64_t *page_l1, uint32_t *to_send,
+                       uint32_t len) {
     printf("[snd] page_l2: 0x%lx, page_l2[0]: 0x%lx\n", (uint64_t)page_l2, (uint64_t)page_l2[0]);
     for (int i = 0; i < len; ++i) {
         if (to_send[i] == 1) {
@@ -116,8 +115,8 @@ __device__ void sender(volatile uint64_t *page_l2, volatile uint64_t *page_l1, u
 
 __device__ uint32_t barrier = 0;
 
-__global__ void loop(volatile uint64_t *page_sender, volatile uint64_t *page_receiver, volatile uint64_t *page_l1,
-                     volatile uint64_t *page_fill) {
+__global__ void loop(volatile uint64_t *page_sender, volatile uint64_t *page_receiver,
+                     volatile uint64_t *page_l1, volatile uint64_t *page_fill) {
     uint32_t smid;
     uint32_t to_send[] = {1, 0, 0, 1, 1, 0};
     uint32_t len = sizeof(to_send) / sizeof(to_send[0]);
@@ -189,10 +188,10 @@ int main(int argc, char *argv[]) {
     cudaMallocManaged(&chunk0, CHUNK0_SIZE);
     cudaMallocManaged(&chunk1, CHUNK1_SIZE);
 
-
     list_rcv = create_list(PAGE_NUM_RECEIVER, (uint8_t *)BASE_ADDR_RECEIVER, STRIDE_SIZE, es_rcv);
     list_snd = create_list(PAGE_NUM_SENDER, (uint8_t *)BASE_ADDR_SENDER, STRIDE_SIZE, es_snd);
-    list_l1 = create_list(PAGE_NUM_L1, (uint8_t *)(idx_to_addr(aim, BASE_ADDR_RECEIVER) + STRIDE_SIZE), STRIDE_SIZE, NULL);
+    list_l1 = create_list(PAGE_NUM_L1, (uint8_t *)(idx_to_addr(aim, BASE_ADDR_RECEIVER) + STRIDE_SIZE),
+                          STRIDE_SIZE, NULL);
     list_fill = create_list(PAGE_FILL_NUM, (uint8_t *)DUMMY_ADDR + STRIDE_SIZE, STRIDE_SIZE, NULL);
 
     uint64_t *dummy = (uint64_t *)DUMMY_ADDR;

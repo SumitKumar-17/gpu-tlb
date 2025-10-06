@@ -2,19 +2,18 @@
 #include <iostream>
 #define MATRIX_SIZE 4096
 
-
-#define CHECK(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
-            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": " \
-                      << cudaGetErrorString(err) << "\n"; \
-            exit(EXIT_FAILURE); \
-        } \
+#define CHECK(call)                                                                                \
+    do {                                                                                           \
+        cudaError_t err = call;                                                                    \
+        if (err != cudaSuccess) {                                                                  \
+            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": "                   \
+                      << cudaGetErrorString(err) << "\n";                                          \
+            exit(EXIT_FAILURE);                                                                    \
+        }                                                                                          \
     } while (0)
 
 // Simulate workload kernel
-__global__ void matrix_workload_kernel(float* A, float* B, float* C, float* D, int N) {
+__global__ void matrix_workload_kernel(float *A, float *B, float *C, float *D, int N) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -28,18 +27,18 @@ __global__ void matrix_workload_kernel(float* A, float* B, float* C, float* D, i
     }
 }
 
-
 // Memory latency probing kernel (pointer chasing)
-__global__ void memory_latency_kernel(int* ptr_chain, unsigned long long* latencies, int iterations) {
+__global__ void memory_latency_kernel(int *ptr_chain, unsigned long long *latencies,
+                                      int iterations) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    if (tid == 0) {  // only one thread measures latency
+    if (tid == 0) { // only one thread measures latency
         unsigned long long start, end;
-        volatile int* ptr = ptr_chain;
+        volatile int *ptr = ptr_chain;
         int index = 0;
 
         for (int i = 0; i < iterations; ++i) {
             start = clock64();
-            index = ptr[index];  // pointer chasing load
+            index = ptr[index]; // pointer chasing load
             end = clock64();
             latencies[i] = end - start;
         }
@@ -48,8 +47,8 @@ __global__ void memory_latency_kernel(int* ptr_chain, unsigned long long* latenc
 
 int main() {
     const int iterations = 1000;
-    int* d_ptr_chain;
-    unsigned long long* d_latencies, *h_latencies;
+    int *d_ptr_chain;
+    unsigned long long *d_latencies, *h_latencies;
 
     const int N = MATRIX_SIZE;
     size_t bytes = N * N * sizeof(float);
@@ -67,13 +66,12 @@ int main() {
     // Launch matrix workload kernel on stream1
     dim3 threads(16, 16);
     dim3 blocks((N + threads.x - 1) / threads.x, (N + threads.y - 1) / threads.y);
-    
-
 
     // Create a pointer chasing structure in GPU memory
-    int* h_ptr_chain = new int[iterations];
-    for (int i = 0; i < iterations - 1; ++i) h_ptr_chain[i] = i + 1;
-    h_ptr_chain[iterations - 1] = 0;  // loop back
+    int *h_ptr_chain = new int[iterations];
+    for (int i = 0; i < iterations - 1; ++i)
+        h_ptr_chain[i] = i + 1;
+    h_ptr_chain[iterations - 1] = 0; // loop back
 
     CHECK(cudaMalloc(&d_ptr_chain, iterations * sizeof(int)));
     CHECK(cudaMemcpy(d_ptr_chain, h_ptr_chain, iterations * sizeof(int), cudaMemcpyHostToDevice));
@@ -95,7 +93,8 @@ int main() {
     CHECK(cudaStreamSynchronize(stream1));
     CHECK(cudaStreamSynchronize(stream2));
 
-    CHECK(cudaMemcpy(h_latencies, d_latencies, iterations * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(h_latencies, d_latencies, iterations * sizeof(unsigned long long),
+                     cudaMemcpyDeviceToHost));
 
     for (int i = 0; i < 20; ++i) {
         std::cout << "Latency [" << i << "] = " << h_latencies[i] << " cycles\n";

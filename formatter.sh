@@ -62,7 +62,7 @@ main() {
     
     echo "Formatting all C/C++ files in the directory: $DIR"
     
-    find "$DIR" -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hpp" \) | while read -r file
+    find "$DIR" -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hpp" -o -name "*.cu" \) | while read -r file
     do
         echo "Formatting: $file"
         clang-format -i -style=file "$file" 
