@@ -1,0 +1,17 @@
+name: gpu-tlb-channel
+channels:
+  - nvidia     # Prioritize nvidia channel for CUDA packages
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9      # Or 3.10, 3.11 - choose a specific version
+  - numpy           # Core dependency for the Python script
+  - cudatoolkit=12.5 # <<< IMPORTANT: Change this version! 
+                      # Match this to your installed NVIDIA driver compatibility.
+                      # Check driver compatibility here: 
+                      # https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#cuda-major-component-versions
+                      # Or use a recent compatible version like 11.8 or 12.x
+  # Optional (if you need to compile C/C++ examples within conda):
+  # - make
+  # - gcc_linux-64    # Provides gcc
+  # - gxx_linux-64    # Provides g++
