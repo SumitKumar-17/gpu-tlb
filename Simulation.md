@@ -246,37 +246,6 @@ Minimal implementation for basic functionality testing:
 - **Single-threaded**: Uses threading instead of multiprocessing
 - **Quick Validation**: Fast execution for development and debugging
 
-## 6. Build System
-
-### 6.1 Makefile
-
-Automated compilation and execution:
-
-```makefile
-# Compilation targets
-$(KERNEL_PTX): $(KERNEL_SRC)
-    $(NVCC) $(NVCCFLAGS) $(ARCH) --ptx -o $@ $<
-
-# Execution targets
-run_baseline: $(BASELINE_KERNEL_PTX)
-    python3 run_timing.py
-
-run_covert_channel: $(KERNEL_PTX)
-    python3 covert_channel_sim.py
-```
-
-### 6.2 Environment Configuration (`environment.yml`)
-
-Conda environment specification:
-
-```yaml
-dependencies:
-  - python=3.9
-  - numpy
-  - cudatoolkit=12.5  # Match to driver compatibility
-  - matplotlib  # For visualization
-```
-
 ## 7. Technical Implementation Details
 
 ### 7.1 Memory Management Strategy
@@ -342,25 +311,8 @@ threshold = (np.mean(hit_latencies) + np.mean(miss_latencies)) / 2
 - **Bandwidth**: 1-50 bits per second depending on configuration
 - **Error Sources**: Cross-process interference, system load, thermal effects
 
-## 8. Security Implications
 
-### 8.1 Attack Surface
-
-**Vulnerable Systems:**
-- **GPU Sharing**: Multi-tenant GPU environments
-- **Container Isolation**: Docker/Kubernetes with GPU passthrough
-- **Virtual Machines**: GPU virtualization with shared physical resources
-- **Multi-Instance GPU (MIG)**: NVIDIA's hardware partitioning
-
-### 8.2 Defense Mechanisms
-
-**Countermeasures:**
-- **TLB Randomization**: Randomize cache set mapping
-- **Resource Isolation**: Dedicated GPU memory regions per tenant
-- **Timing Noise Injection**: Add random delays to mask timing channels
-- **Access Pattern Monitoring**: Detect suspicious memory access patterns
-
-### 8.3 Detection Strategies
+### 8 Detection Strategies
 
 **Behavioral Analysis:**
 - **Memory Access Patterns**: Unusual sequential/stride patterns
@@ -368,22 +320,8 @@ threshold = (np.mean(hit_latencies) + np.mean(miss_latencies)) / 2
 - **Resource Utilization**: Abnormal GPU memory usage patterns
 - **Performance Monitoring**: Unexpected latency variations
 
-## 9. Experimental Setup and Results
 
-### 9.1 Hardware Requirements
-
-**Target Platform:**
-- **GPU**: NVIDIA RTX 3060 (Ampere architecture)
-- **Driver**: CUDA 12.0+ compatible
-- **Memory**: 8GB+ system RAM for memory pools
-- **OS**: Linux (ASLR disabled recommended)
-
-**Software Dependencies:**
-- **CUDA Toolkit**: nvcc compiler for PTX generation
-- **Python 3.9+**: With NumPy, ctypes
-- **Optional**: matplotlib for visualization
-
-### 9.2 Performance Characteristics
+### 9 Performance Characteristics
 
 **Typical Results:**
 - **Accuracy**: 85-95% bit accuracy
@@ -403,31 +341,136 @@ threshold = (np.mean(hit_latencies) + np.mean(miss_latencies)) / 2
 - **System Load**: Background GPU activity affects accuracy
 - **Thermal State**: GPU throttling impacts timing consistency
 - **Memory Fragmentation**: Affects page allocation success
-- **Driver Version**: Different CUDA drivers show timing variations
+- **Driver Version**: Different CUDA drivers show timing
 
-## 10. Future Research Directions
+## Code Structure Analysis - Your Implementation
 
-### 10.1 Architecture Extensions
+### Core Functions Breakdown
 
-**Target Platforms:**
-- **Newer Architectures**: Ada Lovelace (RTX 40-series), Hopper (H100)
-- **Different Vendors**: AMD RDNA, Intel Arc GPUs
-- **Mobile GPUs**: Tegra, smartphone integrated graphics
+#### 1. `l3_hash_rtx3060.py` - Hash Function
+```python
+def get_l3_set_index_rtx3060_64k(gpu_va):
+```
+**What it does**: Takes GPU virtual address, returns cache set number (0-255)
+**How**: XORs specific bits from address using 8 XOR chains
+**Used by**: Memory allocation functions to find conflicting pages
 
-### 10.2 Attack Sophistication
+#### 2. `covert_channel_sim.py` - Main Simulation
 
-**Advanced Techniques:**
-- **Multi-Level Channels**: Simultaneous L1/L2/L3 exploitation
-- **Frequency Domain**: FFT-based signal processing
-- **Error Correction**: Forward error correction codes
-- **Adaptive Thresholds**: Machine learning-based threshold adaptation
+**Key Functions:**
+```python
+def find_eviction_pages_driver(n_pages_needed, page_size, pool_size_mb):
+```
+- Allocates 256MB memory pool
+- Tests each page with hash function
+- Finds pages that map to same cache sets
+- Returns page indices for set 0 and set 1
 
-### 10.3 Defense Research
+```python
+def initialize_chase_pages_driver(pool_gpu_va_start, page_indices, n_pages):
+```
+- Creates pointer chains in each page
+- Each page has 8 pointers pointing to each other in circle
+- Prevents compiler optimization
 
-**Mitigation Development:**
-- **Hardware Solutions**: TLB design modifications
-- **Software Isolation**: Enhanced GPU virtualization
-- **Detection Systems**: Real-time timing channel detection
-- **Performance Impact**: Overhead analysis of countermeasures
+```python
+def sender_worker(bit_q, delay_ms, stop_event, ...):
+```
+- Runs in separate process
+- Gets bits from queue
+- Launches GPU kernel to access either set 0 or set 1 pages
+- Creates cache contention
 
-This comprehensive implementation demonstrates the feasibility of GPU TLB-based covert channels and provides a foundation for both security research and defense mechanism development. The modular design allows for extensive experimentation with different parameters and attack vectors while maintaining clear separation between components for analysis and modification.
+```python
+def receiver_worker(result_q, num_bits, samples_per_bit, stop_event, ...):
+```
+- Runs in separate process  
+- Launches GPU kernel to measure timing
+- Kernel measures how long it takes to access both sets
+- Returns timing data
+
+#### 3. `channel_kernels.cu` - GPU Kernels
+
+```cuda
+__global__ void sender_contention_kernel(uint64_t *page_vas, int num_pages, int *stop_flag)
+```
+**What it does**: 
+- Accesses memory pages repeatedly
+- Creates cache pressure on specific set
+- Single thread accesses pages in round-robin
+
+```cuda
+__global__ void receiver_probe_kernel(uint64_t *page_vas0, uint64_t *page_vas1, ...)
+```
+**What it does**:
+- Measures time to access set 0 pages (t0)
+- Measures time to access set 1 pages (t1)  
+- Stores (t0,t1) pairs in buffer
+- Uses pointer chasing (8 steps per page)
+
+#### 4. `run_timing.py` - Baseline Measurement
+
+```python
+def allocate_test_pages_driver():
+```
+- Allocates pages for timing tests
+- Sets up L1/L2 eviction pages
+- Sets up L3 fill pages (20,000 pages)
+
+```python
+def measure_baseline_latency():
+```
+- Runs timing_kernel to measure hit/miss times
+- Determines THRESHOLD_T value
+- Creates baseline for decoding
+
+#### 5. `gpu_utils.py` - Utility Functions
+
+```python
+def load_cuda_libs():
+```
+- Loads libcuda.so and libcudart.so
+- Sets up function prototypes for CUDA API calls
+
+```python
+def compile_kernels_to_ptx(cu_file, ptx_file):
+```
+- Runs nvcc compiler
+- Converts .cu to .ptx for runtime loading
+
+### Data Flow
+
+1. **Setup**: `find_eviction_pages_driver()` finds conflicting pages
+2. **Init**: `initialize_chase_pages_driver()` sets up pointer chains  
+3. **Sender**: Gets bit → selects page set → launches kernel → creates contention
+4. **Receiver**: Measures timing → detects slow/fast access → decodes bits
+5. **Decode**: Compares t0,t1 times against threshold → outputs decoded bits
+
+### Key Variables
+
+```python
+N_PAGES = 11                  # Pages per set
+PAGE_SIZE = 64 * 1024         # 64KB pages  
+THRESHOLD_T = 1504            # Timing threshold (GPU cycles)
+DELAY_MS_SENDER = 20          # Time between bits
+NUM_BITS = 64                 # Message length
+```
+
+### Timing Logic
+```python
+# In receiver kernel:
+t0 = time_to_access_set0_pages
+t1 = time_to_access_set1_pages
+
+# In decoder:
+if t0 > THRESHOLD_T: # Slow access to set 0
+    decoded_bit = 0  # Sender was accessing set 0
+elif t1 > THRESHOLD_T: # Slow access to set 1  
+    decoded_bit = 1  # Sender was accessing set 1
+```
+
+### File Dependencies
+- `l3_hash_rtx3060.py` → used by all memory allocation
+- `channel_kernels.cu` → compiled to `channel_kernels.ptx`
+- `gpu_utils.py` → used by all Python files
+- `covert_channel_sim.py` → main entry point
